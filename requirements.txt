@@ -1,0 +1,9 @@
+fastapi
+pydantic
+hypercorn[h2]
+pdfplumber
+requests
+google-generativeai
+duckduckgo-search
+beautifulsoup4
+python-dotenv
