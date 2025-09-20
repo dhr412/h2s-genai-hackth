@@ -1,11 +1,8 @@
 import pdfplumber
 import math
 import requests
-import time
 from google import genai
 from google.genai import types
-from ddgs import DDGS
-from bs4 import BeautifulSoup
 from typing import List, Dict
 import os
 from dotenv import load_dotenv
@@ -13,9 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN_LIMIT_LEGAL = 128_000
-TOKEN_LIMIT_MISINFO = 110_000
 MODEL_NAME_LEGAL = "gemma-3-27b-it"
-MODEL_NAME_MISINFO = "gemma-3n-e4b-it"
 
 
 def get_gemini_client():
@@ -134,159 +129,4 @@ def process_legal_document(pdf_url: str) -> Dict[str, any]:
         }
 
     except Exception as e:
-        if "local_pdf_path" in locals() and os.path.exists(local_pdf_path):
-            os.remove(local_pdf_path)
-
         return {"status": "error", "message": str(e), "explanation": None}
-
-
-def search_web_info(query: str, num_results: int = 8) -> List[Dict[str, str]]:
-    search_results = []
-
-    try:
-        with DDGS() as ddgs:
-            results = list(
-                ddgs.text(
-                    query,
-                    max_results=num_results,
-                    region="wt-wt",
-                    safesearch="moderate",
-                )
-            )
-
-            for result in results:
-                try:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                    }
-                    response = requests.get(result["href"], headers=headers, timeout=16)
-                    response.raise_for_status()
-
-                    soup = BeautifulSoup(response.content, "html.parser")
-
-                    for tag in soup(["script", "style", "nav", "header", "footer"]):
-                        tag.decompose()
-
-                    main_content = soup.find(["article", "main"]) or soup.find(
-                        "div", class_=["content", "post"]
-                    )
-                    text = main_content.get_text() if main_content else soup.get_text()
-
-                    clean_text = " ".join(text.split())[:3000]
-
-                    search_results.append(
-                        {
-                            "title": result["title"],
-                            "url": result["href"],
-                            "content": f"{result['body']}\n\nFull content: {clean_text}",
-                        }
-                    )
-
-                except Exception:
-                    search_results.append(
-                        {
-                            "title": result["title"],
-                            "url": result["href"],
-                            "content": result["body"],
-                        }
-                    )
-
-                time.sleep(0.5)
-
-    except Exception as e:
-        print(f"DDGS search failed: {str(e)}")
-
-    return search_results
-
-
-def extract_label(response_text: str) -> str:
-    text = response_text.upper()
-
-    if "TRUE" in text and "FALSE" not in text:
-        return "TRUE"
-    elif "FALSE" in text and "TRUE" not in text:
-        return "FALSE"
-    elif "PARTIALLY TRUE" in text or "PARTIAL" in text:
-        return "PARTIALLY TRUE"
-    elif "UNCERTAIN" in text or "UNCLEAR" in text:
-        return "UNCERTAIN"
-    else:
-        return "UNCERTAIN"
-
-
-def verify_misinformation(user_query: str) -> Dict[str, any]:
-    try:
-        client = get_gemini_client()
-
-        search_results = search_web_info(user_query, num_results=5)
-
-        if not search_results:
-            return {
-                "status": "error",
-                "message": "No search results found. Cannot verify the information.",
-                "classification": None,
-                "explanation": None,
-                "sources": [],
-            }
-
-        user_content = types.Content(
-            role="user",
-            parts=[
-                types.Part.from_text(
-                    text=(
-                        "You are a fact-checking assistant.\n\n"
-                        f"Claim: {user_query}\n\n"
-                        f"Sources:\n{search_results}\n\n"
-                        "Task: Classify the claim as TRUE, FALSE, or PARTIALLY TRUE. "
-                        "Explain the reasoning in clear, plain English, citing sources when possible."
-                    )
-                )
-            ],
-        )
-
-        response = client.models.generate_content(
-            model=MODEL_NAME_MISINFO, contents=[user_content]
-        )
-
-        classification = extract_label(response.text)
-
-        detailed_explanation = None
-        if classification == "FALSE":
-            detail_content = types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(
-                        text=(
-                            "Provide a detailed explanation of why the following claim might be misleading "
-                            "or inaccurate. Reference the provided sources and highlight contradictions, "
-                            "missing context, or manipulations.\n\n"
-                            f"Claim: {user_query}\n\n"
-                            f"Sources:\n{search_results}"
-                        )
-                    )
-                ],
-            )
-
-            detail_response = client.models.generate_content(
-                model=MODEL_NAME_MISINFO, contents=[detail_content]
-            )
-
-            detailed_explanation = detail_response.text
-
-        return {
-            "status": "success",
-            "classification": classification,
-            "explanation": response.text,
-            "detailed_explanation": detailed_explanation,
-            "sources": [{"title": r["title"], "url": r["url"]} for r in search_results],
-            "sources_count": len(search_results),
-        }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-            "classification": None,
-            "explanation": None,
-            "sources": [],
-        }
