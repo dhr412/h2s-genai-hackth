@@ -4,10 +4,3 @@ curl -X POST "<url>/analyze-legal-document" \
      -d '{"pdf_url": "https://example.com/sample-legal-document.pdf"}'
 ```
 
----
-
-```bash
-curl -X POST "<url>/verify-misinformation" \
-     -H "Content-Type: application/json" \
-     -d '{"query": "Are aliens real"}'
-```
