@@ -3,5 +3,5 @@ pydantic
 hypercorn[h2]
 pdfplumber
 requests
-google-generativeai
+google-genai
 python-dotenv
